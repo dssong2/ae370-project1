@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-class Controls:
+class Dynamics:
     def __init__(
             self,
             t_motor_burnout: float = 1.971,
@@ -31,7 +31,7 @@ class Controls:
         self.prop_mass = prop_mass # kg
         self.L_ne = L_ne # m
         self.csv_path = self.csv_path = (
-            Path(__file__).resolve().parents[1] / "data" / "openrocket_data.csv"
+            Path(__file__).resolve().parents[0] / "data" / "openrocket_data.csv"
         )
         self.f_preburnout : Matrix = None
         self.f_postburnout : Matrix = None
@@ -40,10 +40,12 @@ class Controls:
         self.f_subs : Matrix = None
         self.dt = dt
         self.x0 = np.array(x0, dtype=float) if x0 is not None else None
+        self.t0 = 0.0
         self.t_sym : Symbol = None
 
         # Logging
         self.states = [self.x0]
+        self.ts = [self.t0]
 
 
     def setRocketParams(self, t_motor_burnout: float, t_estimated_apogee: float, t_launch_rail_clearance: float, prop_mass: float):
@@ -388,7 +390,7 @@ class Controls:
 
         ## Moment due to aileron deflection ##
         # Fin misalignment moment, remove for 0 roll (ideal rocket flight)
-        M_fin = 200 * (Float(1)/2 * rho * v_mag**2) * Matrix([0, 0, 1e-8])
+        M_fin = (Float(1)/2 * rho * v_mag**2) * Matrix([0, 0, 1e-8])
         M1 = M_fin[0] + Ccm[0] - Cdm * w1
         M2 = M_fin[1] + Ccm[1] - Cdm * w2
         M3 = M_fin[2] + Ccm[2]
@@ -434,7 +436,17 @@ class Controls:
             self.f_preburnout = f
         else:
             self.f_postburnout = f
-    
+
+
+    def setup_eom(self):
+        """Setup the equations of motion by deriving pre- and post-burnout EOMs.
+
+        Returns:
+            None
+        """
+        self.deriveEOM(post_burnout=False)
+        self.deriveEOM(post_burnout=True)
+
 
     def get_f(self, t: float, xhat: np.array):
         """Compute the A and B matrices at time t.
@@ -563,7 +575,7 @@ class Controls:
         k4 = self._f(t+dt,    x + dt*k3)
         return x + (dt/6.)*(k1 + 2*k2 + 2*k3 + k4)
     
-    def run_rk4(self, t, xhat: np.array, u: np.array):
+    def run_rk4(self, xhat: np.array):
         """Runge-Kutta 4th order integration of the state estimator recursively until the estimated apogee time is reached.
         Args:
             t (float): The current time in seconds.
@@ -573,10 +585,10 @@ class Controls:
             np.array: The updated state estimate as a numpy array.
         """
         # loop, not recursion
+        t = self.t0
         while t < self.t_estimated_apogee:
-            self.computeAB(t, xhat, u)  # refresh self.f_subs
-            # (optionally compute C, y, and use L for a correction later)
-            xhat = self._rk4_step(t, xhat, u)
+            self.get_f(t, xhat)  # refresh self.f_subs
+            xhat = self._rk4_step(t, xhat)
 
             # Normalize quaternion
             qn = np.linalg.norm(xhat[6:10])
@@ -585,10 +597,11 @@ class Controls:
             # log + advance time
             self.states.append(xhat.copy())
             t += self.dt
+            self.ts.append(t)
             print(f"t: {t:.3f}")
 
 
-    def test_eom(self, t: float, xhat: np.array, u: np.array):
+    def test_eom(self, xhat: np.array):
         """Test the equations of motion by computing f_subs at the given state and input.
 
         Args:
@@ -596,33 +609,33 @@ class Controls:
             xhat (np.array): The current state estimate as a numpy array.
             u (np.array): The current input as a numpy array.
         """
+        t = self.t0
         while t < self.t_estimated_apogee:
-            print(f"t: {t:.3f}, xhat: {xhat}, u: {u}")
+            print(f"t: {t:.3f}, xhat: {xhat}")
 
-            self.get_f(t, xhat, u)
+            self.get_f(t, xhat)
             f_subs = np.array(self.f_subs, dtype=float).reshape(-1)
             xhat = xhat + f_subs * self.dt
             xhat[6:10] /= np.linalg.norm(xhat[6:10])
 
             self.states.append(xhat)
-            t = t + self.dt
+            t += self.dt
+            self.ts.append(t)
             if f_subs[5] < 0:
                 print("Warning: Longitudinal velocity v3 is negative at time t =", t)
-                print(f"t: {t:.3f}, xhat: {xhat}, u: {u}")
+                print(f"t: {t:.3f}, xhat: {xhat}")
 
         
 # For testing
 def main():
     ## Define initial conditions ##
     xhat0 = np.array([0, 0, 0, 0, 0, 0, 1, 0, 0, 0]) # Initial state estimate
-    u0 = np.array([0])
     sampling_rate = 20.0  # Hz
     dt = 1.0 / sampling_rate
 
-    controller = Controls(dt=dt, x0=xhat0, u0=u0, t_launch_rail_clearance=0.308)
-    controller.deriveEOM(post_burnout=False)
-    controller.deriveEOM(post_burnout=True)
-    controller.run_rk4(t=0.0, xhat=xhat0)
+    dynamics = Dynamics(dt=dt, x0=xhat0)
+    dynamics.setup_eom()
+    dynamics.run_rk4(t=0.0, xhat=xhat0)
 
 
 if __name__ == "__main__":
