@@ -31,7 +31,7 @@ class Dynamics:
         self.prop_mass = prop_mass # kg
         self.L_ne = L_ne # m
         self.csv_path = self.csv_path = (
-            Path(__file__).resolve().parents[0] / "data" / "openrocket_data.csv"
+            Path(__file__).resolve().parents[1] / "data" / "openrocket_data.csv"
         )
         self.f_preburnout : Matrix = None
         self.f_postburnout : Matrix = None
