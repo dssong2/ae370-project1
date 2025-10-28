@@ -98,7 +98,7 @@ class Dynamics:
         coeffs = np.polyfit(t, y, n)
         return coeffs, n
 
-
+    # TODO: Potential to implement our own interpolation function instead of using numpy's interp
     def getTimeConstants(self, t: float):
         """Get the constants for the rocket at time t.
 
