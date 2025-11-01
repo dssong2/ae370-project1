@@ -1,3 +1,4 @@
+# TODO: reorganize all the code so that all parameters are defined together either in __init__ or in a separate function
 from sympy import *
 import numpy as np
 import pandas as pd
@@ -8,7 +9,7 @@ class Dynamics:
             self,
             t_motor_burnout: float = 1.971,
             t_estimated_apogee: float = 13.571,
-            t_launch_rail_clearance: float = 0.164,
+            t_launch_rail_clearance: float = 0.308,
             prop_mass: float = 0.355, # kg
             L_ne: float = 1.17, # m
             dt: float = 0.01,
@@ -36,6 +37,7 @@ class Dynamics:
         self.f_preburnout : Matrix = None
         self.f_postburnout : Matrix = None
         self.vars : list = None
+        self.params : list = None
         self.f_params : Matrix = None
         self.f_subs : Matrix = None
         self.dt = dt
@@ -305,12 +307,14 @@ class Dynamics:
         v3 = symbols('v_3', real = True, positive = True) # Longitudinal velocity, assumed positive during flight
         qw, qx, qy, qz = symbols('q_w q_x q_y q_z', real = True) # Quaternion components
         I1, I2, I3 = symbols('I_1 I_2 I_3', real = True) # Moments of inertia
-        M1, M2, M3 = symbols('M_1 M_2 M_3', real = True) # Moments
         T1, T2, T3 = symbols('T_1 T_2 T_3', real = True) # Thrusts
-        mass, rho, A, g, CG = symbols('m rho A g CG', real = True) # Mass, air density, reference area, gravity, center of gravity
-        delta1 = symbols('delta_1', real = True) # Aileron angle
-
+        mass, rho, d, g, CG = symbols('m rho d g CG', real = True) # Mass, air density, diameter, gravity, center of gravity
+        delta = symbols('delta', real = True) # Fin cant angle
+        Cnalpha_fin = symbols('Cnalpha_fin', real = True, positive = True) # Fin normal force coefficient derivative
+        Cr, Ct, s = symbols('Cr Ct s', real = True, positive = True) # Fin root chord, tip chord, span
+        N = symbols('N', real = True, positive = True) # Number of fins
         t_sym = symbols('t', real = True) # Time symbol for Heaviside function
+        
         self.t_sym = t_sym
         H = Heaviside(t_sym - Float(self.t_launch_rail_clearance), 0)  # 0 if t < t_launch_rail_clearance, 1 if t >= t_launch_rail_clearance
 
@@ -326,11 +330,14 @@ class Dynamics:
         v_mag = sqrt(v1**2 + v2**2 + v3**2 + eps**2) # Magnitude of velocity with small term to avoid division by zero
         vhat = v / v_mag  # Unit vector in direction of velocity
 
+        ## Rocket reference area ##
+        A = pi * (d/2)**2 # m^2
+
         ## Thrust ##
         T : Matrix = Matrix([T1, T2, T3])  # Thrust vector, T1 and T2 are assumed 0
 
         ## Gravity ##
-        Fg_world = Matrix([0.0, 0.0, -mass * g])
+        Fg_world = Matrix([0.0, 0.0, mass * g])
         R_world_to_body = self.R_BW_from_q(qw, qx, qy, qz)  # Rotation matrix from world to body frame
         Fg : Matrix = R_world_to_body * Fg_world  # Transform gravitational force to body frame
 
@@ -366,9 +373,6 @@ class Dynamics:
         else:
             SM = -0.086*AoA_deg + 2.73
 
-        ## Rocket diameter ##
-        d = Float(7.87)/100 # m
-
         ## Corrective moment coefficient ##
         # Multiplying by stability because CG is where rotation is about and CP is where force is applied
             # SM = (CP - CG) / d
@@ -390,10 +394,14 @@ class Dynamics:
 
         ## Moment due to aileron deflection ##
         # Fin misalignment moment, remove for 0 roll (ideal rocket flight)
-        M_fin = (Float(1)/2 * rho * v_mag**2) * Matrix([0, 0, 1e-8])
+        M_fin = 1.9 * (Float(1)/2 * rho * v_mag**2) * Matrix([0, 0, 1e-6])
+        Y_MA = (s/3) * (Cr + 2*Ct) / (Cr + Ct) # Fin mid-chord distance from centerline
+        r_t = d/2
+        A_fin = (Cr + Ct)/2 * s # Fin reference area
+        # M_fin = (N * (Y_MA + r_t) * (Cnalpha_fin) * delta * (1/2 * rho * v_mag**2) * A_fin) * Matrix([0, 0, 1])  # Moment due to fin cant angle
         M1 = M_fin[0] + Ccm[0] - Cdm * w1
         M2 = M_fin[1] + Ccm[1] - Cdm * w2
-        M3 = M_fin[2] + Ccm[2]
+        M3 = M_fin[2] + Ccm[2] - Float(0.5) * Cdm * w3
 
         ## Quaternion kinematics ##
         S = Matrix([[0, -w3, w2],
@@ -429,8 +437,10 @@ class Dynamics:
             [qdot[3]]
         ])
 
-        vars = [w1, w2, w3, v1, v2, v3, qw, qx, qy, qz, delta1, I1, I2, I3, T1, T2, T3, mass, rho, A, g, CG]
+        vars = [w1, w2, w3, v1, v2, v3, qw, qx, qy, qz]
         self.vars = vars
+        params = [I1, I2, I3, T1, T2, T3, mass, rho, d, g, CG, delta, Cnalpha_fin, Cr, Ct, s, N]
+        self.params = params
 
         if (not post_burnout):
             self.f_preburnout = f
@@ -463,8 +473,9 @@ class Dynamics:
         if self.f_preburnout is None or self.f_postburnout is None or self.vars is None:
             print("Equations of motion have not been derived yet. Call deriveEOM() first on pre- and post-burnout.")
             return None, None, None, None
-        
-        w1, w2, w3, v1, v2, v3, qw, qx, qy, qz, delta1, I1, I2, I3, T1, T2, T3, mass, rho, A, g, CG = self.vars
+
+        w1, w2, w3, v1, v2, v3, qw, qx, qy, qz = self.vars
+        I1, I2, I3, T1, T2, T3, mass, rho, d, g, CG, delta, Cnalpha_fin, Cr, Ct, s, N = self.params
 
         ## Get time varying constants ##
         constants = self.getTimeConstants(t)
@@ -481,10 +492,16 @@ class Dynamics:
             T2: thrust[1],
             T3: thrust[2],
             mass: Float(mass_rocket),
-            rho: Float(1.225), # kg/m^3 temp constant rho
-            A: pi * Float((7.87/100/2)**2), # m^2 reference area
-            g: Float(9.81), # m/s^2
             CG: Float(CoG), # m center of gravity
+            rho: Float(1.225), # kg/m^3 temp constant rho
+            g: Float(-9.81), # m/s^2
+            N: Float(4), # number of fins
+            d: Float(7.87/100) , # m rocket diameter
+            Cr: Float(18.0/100), # m fin root chord
+            Ct: Float(5.97/100), # m fin tip chord
+            s: Float(8.76/100), # m fin span
+            Cnalpha_fin: Float(2.72025), # fin normal force coefficient derivative
+            delta: rad(0.0), # rad fin cant angle, assume 0 for ideal rocket flight
             self.t_sym: Float(t)
         }
 
@@ -586,7 +603,7 @@ class Dynamics:
         """
         # loop, not recursion
         t = self.t0
-        while t < self.t_estimated_apogee:
+        while xhat[5] >= 0 or t < self.t_estimated_apogee:
             self.get_f(t, xhat)  # refresh self.f_subs
             xhat = self._rk4_step(t, xhat)
 
@@ -625,7 +642,7 @@ class Dynamics:
                 print("Warning: Longitudinal velocity v3 is negative at time t =", t)
                 print(f"t: {t:.3f}, xhat: {xhat}")
 
-        
+      
 # For testing
 def main():
     ## Define initial conditions ##
