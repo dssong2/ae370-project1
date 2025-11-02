@@ -394,14 +394,31 @@ class Dynamics:
 
         ## Moment due to aileron deflection ##
         # Fin misalignment moment, remove for 0 roll (ideal rocket flight)
-        M_fin = 1.9 * (Float(1)/2 * rho * v_mag**2) * Matrix([0, 0, 1e-6])
-        Y_MA = (s/3) * (Cr + 2*Ct) / (Cr + Ct) # Fin mid-chord distance from centerline
+        # M_fin = 5.5 * (Float(1)/2 * rho * v_mag**2) * Matrix([0, 0, 1e-6])
+
+        gamma = Ct/Cr
         r_t = d/2
-        A_fin = (Cr + Ct)/2 * s # Fin reference area
-        # M_fin = (N * (Y_MA + r_t) * (Cnalpha_fin) * delta * (1/2 * rho * v_mag**2) * A_fin) * Matrix([0, 0, 1])  # Moment due to fin cant angle
+        tau = (s + r_t) / r_t
+        Y_MA = (s/3) * (1 + 2*gamma)/(1+gamma) # Spanwise location of fin aerodynamic center
+        K_f = (1/pi**2) * \
+            ((pi**2/4)*((tau+1)**2/tau**2) \
+            + (pi*(tau**2+1)**2/(tau**2*(tau-1)**2))*asin((tau**2-1)/(tau**2+1)) \
+            - (2*pi*(tau+1))/(tau*(tau-1)) \
+            + ((tau**2+1)**2/(tau**2*(tau-1)**2))*asin((tau**2-1)/(tau**2+1))**2 \
+            - (4*(tau+1)/(tau*(tau-1)))*asin((tau**2-1)/(tau**2+1)) \
+            + (8/(tau-1)**2)*log((tau**2+1)/(2*tau)))
+        M_f = K_f * (1/2 * rho * v_mag**2) * (N * (Y_MA + r_t) * Cnalpha_fin * delta * A) # Forcing roll moment due to fin cant angle delta
+
+        trap_integral = s/12 * ((Cr + 3*Ct)*s**2 + 4*(Cr+2*Ct)*s*r_t + 6*(Cr + Ct)*r_t**2)
+        C_ldw = 2 * N * Cnalpha_fin / (A * d**2) * cos(delta) * trap_integral
+        K_d = 1 + ((tau-gamma)/tau - (1-gamma)/(tau-1)*ln(tau))/((tau+1)*(tau-gamma)/2 - (1-gamma)*(tau**3-1)/(3*(tau-1))) # Correction factor for conical fins
+        M_d = K_d * (1/2 * rho * v_mag**2) * A * d * C_ldw * (w3 * d / (2 * v_mag)) # Damping roll moment
+        
+        M_fin = Matrix([0, 0, M_f - M_d])
+        
         M1 = M_fin[0] + Ccm[0] - Cdm * w1
         M2 = M_fin[1] + Ccm[1] - Cdm * w2
-        M3 = M_fin[2] + Ccm[2] - Float(0.5) * Cdm * w3
+        M3 = M_fin[2]
 
         ## Quaternion kinematics ##
         S = Matrix([[0, -w3, w2],
@@ -501,7 +518,7 @@ class Dynamics:
             Ct: Float(5.97/100), # m fin tip chord
             s: Float(8.76/100), # m fin span
             Cnalpha_fin: Float(2.72025), # fin normal force coefficient derivative
-            delta: rad(0.0), # rad fin cant angle, assume 0 for ideal rocket flight
+            delta: rad(1), # rad fin cant angle, assume 0 for ideal rocket flight
             self.t_sym: Float(t)
         }
 
