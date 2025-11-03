@@ -1,4 +1,3 @@
-# TODO: reorganize all the code so that all parameters are defined together either in __init__ or in a separate function
 from sympy import *
 import numpy as np
 import pandas as pd
