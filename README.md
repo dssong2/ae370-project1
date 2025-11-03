@@ -8,3 +8,8 @@ Accurately modeling 6 DoF rocket dynamics comparable to those of other simulatio
 
 ## Purpose
 Analyzing impact of fin cant angle due to manufacturing tolerancing issues. Applications to attitude controlled rocket.
+
+## Usage
+```
+pip install -r requirements.txt
+```
