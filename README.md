@@ -7,4 +7,4 @@ Simplified rocket dynamics.
 Accurately modeling 6 DoF rocket dynamics comparable to those of other simulation software/applications, like OpenRocket and RocketPy.
 
 ## Purpose
-Full or partial rocket attitude control.
+Analyzing impact of fin cant angle due to manufacturing tolerancing issues. Applications to attitude controlled rocket.
