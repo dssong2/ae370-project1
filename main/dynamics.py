@@ -57,7 +57,7 @@ class Dynamics:
 
         # Environmental parameters
         self.rho : float = 1.225 # Air density kg/m^3
-        self.g : float = 9.81 # Gravitational acceleration m/s^2
+        self.g : float = -9.81 # Gravitational acceleration m/s^2
 
         # Fin parameters
         self.N : float = None # Number of fins
@@ -115,12 +115,11 @@ class Dynamics:
         self.rho = rho
         self.g = g
 
-    def setFinParams(self, N: int, d: float, Cr: float, Ct: float, s: float, Cnalpha_fin: float, delta: float):
+    def setFinParams(self, N: int, Cr: float, Ct: float, s: float, Cnalpha_fin: float, delta: float):
         """Set the fin parameters.
 
         Args:
             N (int): Number of fins.
-            d (float): Rocket diameter in meters.
             Cr (float): Fin root chord in meters.
             Ct (float): Fin tip chord in meters.
             s (float): Fin span in meters.
@@ -128,7 +127,6 @@ class Dynamics:
             delta (float): Fin cant angle in degrees.
         """
         self.N = N
-        self.d = d
         self.Cr = Cr
         self.Ct = Ct
         self.s = s
@@ -204,37 +202,101 @@ class Dynamics:
 
         constants = dict()
         ## Post burnout constants ##
-        # I = Matrix([0.287, 0.287, 0.0035]) # Post burnout inertia values from OpenRocket, kg*m^2
-        # m = 2.589  # Post burnout mass from OpenRocket, kg
-        # CG = 63.5/100  # Post burnout CG from OpenRocket, m
+        I = Matrix([0.287, 0.287, 0.0035]) # Post burnout inertia values from OpenRocket, kg*m^2
+        m = 2.589  # Post burnout mass from OpenRocket, kg
+        CG = 63.5/100  # Post burnout CG from OpenRocket, m
         T = Matrix([0., 0., 0.])  # N
 
         motor_burnout = t > self.t_motor_burnout
 
         # TODO: for added efficiency, only call getLineOfBestFitTime once per variable and store the results
-        if not motor_burnout:
-            # coeffs_mass, degree_mass = self.getLineOfBestFitTime("mass")
-            # m = sum(coeffs_mass[i] * t**(degree_mass - i) for i in range(degree_mass + 1))
+        if not motor_burnout:   
+            coeffs_mass, degree_mass = self.getLineOfBestFitTime("mass")
+            m = sum(coeffs_mass[i] * t**(degree_mass - i) for i in range(degree_mass + 1))
 
-            # coeffs_inertia, degree_inertia = self.getLineOfBestFitTime("inertia")
-            # I_long = sum(coeffs_inertia[i] * t**(degree_inertia - i) for i in range(degree_inertia + 1))
-            # I[0] = I_long # Ixx
-            # I[1] = I_long # Iyy
+            coeffs_inertia, degree_inertia = self.getLineOfBestFitTime("inertia")
+            I_long = sum(coeffs_inertia[i] * t**(degree_inertia - i) for i in range(degree_inertia + 1))
+            I[0] = I_long # Ixx
+            I[1] = I_long # Iyy
 
-            # coeffs_CG, degree_CG = self.getLineOfBestFitTime("CG")
-            # CG = sum(coeffs_CG[i] * t**(degree_CG - i) for i in range(degree_CG + 1))
+            coeffs_CG, degree_CG = self.getLineOfBestFitTime("CG")
+            CG = sum(coeffs_CG[i] * t**(degree_CG - i) for i in range(degree_CG + 1))
 
             times = pd.read_csv(self.csv_path)["# Time (s)"]
             thrust = pd.read_csv(self.csv_path)["Thrust (N)"]
             T[2] = np.interp(t, times, thrust) # Thrust acting in z direction
 
-        # constants["inertia"] = I
-        # constants["mass"] = m
-        # constants["CG"] = CG
+        constants["inertia"] = I
+        constants["mass"] = m
+        constants["CG"] = CG
         constants["thrust"] = T
         
         return constants
     
+
+    def quat_to_euler_xyz(self, q: np.ndarray, degrees=False, eps=1e-9):
+        """
+        Convert quaternion [w, x, y, z] to Euler angles (theta, phi, psi)
+        using the intrinsic XYZ convention:
+            theta: rotation about x (pitch)
+            phi:   rotation about y (yaw)
+            psi:   rotation about z (roll)
+        Such that: R = Rz(psi) @ Ry(phi) @ Rx(theta)
+
+        Args:
+            q (array-like): Quaternion [w, x, y, z].
+            degrees (bool): If True, return angles in degrees. (default: radians)
+            eps (float):    Small epsilon to handle numerical edge cases.
+
+        Returns:
+            (theta, phi, psi): tuple of floats
+        """
+        # normalize to be safe
+        n = np.linalg.norm(q)
+        if n < eps:
+            raise ValueError("Zero-norm quaternion")
+        w = q[0] / n
+        x = q[1] / n
+        y = q[2] / n
+        z = q[3] / n
+
+        # Rotation matrix from quaternion (world<-body)
+        # R[i,j] = row i, column j
+        xx, yy, zz = x*x, y*y, z*z
+        wx, wy, wz = w*x, w*y, w*z
+        xy, xz, yz = x*y, x*z, y*z
+
+        R = np.array([
+            [1 - 2*(yy + zz),   2*(xy - wz),       2*(xz + wy)],
+            [2*(xy + wz),       1 - 2*(xx + zz),   2*(yz - wx)],
+            [2*(xz - wy),       2*(yz + wx),       1 - 2*(xx + yy)]
+        ])
+
+        # Extract for intrinsic XYZ (q = qz(psi) ⊗ qy(phi) ⊗ qx(theta))
+        # From R = Rz(psi) Ry(phi) Rx(theta):
+        #   phi   = asin(-R[2,0])
+        #   theta = atan2(R[2,1], R[2,2])
+        #   psi   = atan2(R[1,0], R[0,0])
+        #
+        # Handle numerical drift by clamping asin argument.
+        s = -R[2, 0]
+        s = np.clip(s, -1.0, 1.0)
+        phi   = np.arcsin(s)
+        theta = np.arctan2(R[2, 1], R[2, 2])
+
+        # If cos(phi) ~ 0 (gimbal lock), fall back to a stable computation for psi
+        if abs(np.cos(phi)) < eps:
+            # At gimbal lock, theta and psi are coupled; choose a consistent psi:
+            # Use elements that remain well-defined:
+            # when cos(phi) ~ 0, use psi from atan2(-R[0,1], R[1,1])
+            psi = np.arctan2(-R[0, 1], R[1, 1])
+        else:
+            psi = np.arctan2(R[1, 0], R[0, 0])
+
+        if degrees:
+            return np.degrees(theta), np.degrees(phi), np.degrees(psi)
+        return theta, phi, psi
+
 
     def R_BW_from_q(self, qw, qx, qy, qz):
         """Convert a quaternion to a rotation matrix. World to body frame.
@@ -292,7 +354,7 @@ class Dynamics:
         Args:
             post_burnout (bool): Whether the rocket is in the post-burnout phase.
         """
-
+        self.checkParamsSet()
         w1, w2, w3, v1, v2 = symbols('w_1 w_2 w_3 v_1 v_2', real = True) # Angular and linear velocities
         v3 = symbols('v_3', real = True, positive = True) # Longitudinal velocity, assumed positive during flight
         qw, qx, qy, qz = symbols('q_w q_x q_y q_z', real = True) # Quaternion components
@@ -478,15 +540,15 @@ class Dynamics:
 
         ## Get time varying constants ##
         constants = self.getThrust(t)
-        # mass_rocket = constants["mass"]
-        # inertia = constants["inertia"]
-        # CoG = constants["CG"]
+        mass_rocket = constants["mass"]
+        inertia = constants["inertia"]
+        x_CG = constants["CG"]
         thrust = constants["thrust"]
 
-        mass_rocket = self.m_0 - self.m_p / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.m_f
-        I_long = self.I_0 - (self.I_0 - self.I_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.I_f
-        inertia = [I_long, I_long, self.I_3]
-        x_CG = self.x_CG_0 - (self.x_CG_0 - self.x_CG_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.x_CG_f
+        # mass_rocket = self.m_0 - self.m_p / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.m_f
+        # I_long = self.I_0 - (self.I_0 - self.I_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.I_f
+        # inertia = [I_long, I_long, self.I_3]
+        # x_CG = self.x_CG_0 - (self.x_CG_0 - self.x_CG_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.x_CG_f
 
         params = {
             I1: Float(inertia[0]), # Ixx
