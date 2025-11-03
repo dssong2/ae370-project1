@@ -583,17 +583,25 @@ class Dynamics:
     
 
     def _f(self, t, x):
-        # assumes you already called computeAB/computeC to refresh self.f_subs
         f = np.asarray(self.f_subs, float).reshape(-1)
         return f
 
     def _rk4_step(self, t, x):
         dt = self.dt
-        k1 = self._f(t,       x)
-        k2 = self._f(t+dt/2., x + dt*k1/2.)
-        k3 = self._f(t+dt/2., x + dt*k2/2.)
-        k4 = self._f(t+dt,    x + dt*k3)
+        self.get_f(t, x)
+        k1 = np.asarray(self.f_subs, float).reshape(-1)
+
+        self.get_f(t + dt/2, x + dt*k1/2)
+        k2 = np.asarray(self.f_subs, float).reshape(-1)
+
+        self.get_f(t + dt/2, x + dt*k2/2)
+        k3 = np.asarray(self.f_subs, float).reshape(-1)
+
+        self.get_f(t + dt, x + dt*k3)
+        k4 = np.asarray(self.f_subs, float).reshape(-1)
+
         return x + (dt/6.)*(k1 + 2*k2 + 2*k3 + k4)
+
     
     def run_rk4(self, xhat: np.array):
         """Runge-Kutta 4th order integration of the state estimator recursively until the estimated apogee time is reached.
@@ -606,8 +614,7 @@ class Dynamics:
         """
         # loop, not recursion
         t = self.t0
-        while xhat[5] >= 0 or t < self.t_estimated_apogee:
-            self.get_f(t, xhat)  # refresh self.f_subs
+        while (t < self.t_launch_rail_clearance or xhat[5] >= 0) and t < self.t_estimated_apogee:
             xhat = self._rk4_step(t, xhat)
 
             # Normalize quaternion
@@ -619,6 +626,7 @@ class Dynamics:
             t += self.dt
             self.ts.append(t)
             print(f"t: {t:.3f}")
+        return np.array(self.ts), np.vstack(self.states)
 
 
     def forward_euler(self, xhat: np.array):
