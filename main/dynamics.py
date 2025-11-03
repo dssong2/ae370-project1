@@ -7,31 +7,20 @@ from pathlib import Path
 class Dynamics:
     def __init__(
             self,
-            t_motor_burnout: float = 1.971,
-            t_estimated_apogee: float = 13.571,
-            t_launch_rail_clearance: float = 0.308,
-            prop_mass: float = 0.355, # kg
-            L_ne: float = 1.17, # m
-            dt: float = 0.01,
+            t_estimated_apogee: float = 13.571, # Estimated time until apogee
+            dt: float = 0.01, # Time step for simulation
             x0: np.ndarray = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]), # Initial state
         ):
-        """Initialize the Controls class. Rocket body axis is aligned with y-axis.
+        """Initialize the Dynamics class. Rocket body axis is aligned with z-axis.
 
         Args:
-            t_motor_burnout (float): Time until motor burnout in seconds. Defaults to 1.971.
-            t_estimated_apogee (float): Estimated time until apogee in seconds. Defaults to 13.571.
-            t_launch_rail_clearance (float): Time until launch rail clearance in seconds. Defaults to 0.164.
-            prop_mass (float): Propellant mass in kg. Defaults to 0.355.
-            L_ne (float): Distance the nozzle is from the tip of the nose cone in meters. Defaults to 1.17.
-            dt (float): Time step for simulation in seconds. Defaults to 0.01.
+            t_estimated_apogee (float): Estimated time until apogee in seconds.
+            dt (float): Time step for simulation in seconds.
+            x0 (np.ndarray): Initial state vector.
         """
 
-        self.t_motor_burnout = t_motor_burnout # seconds
-        self.t_estimated_apogee = t_estimated_apogee # seconds
-        self.t_launch_rail_clearance = t_launch_rail_clearance # seconds
-        self.prop_mass = prop_mass # kg
-        self.L_ne = L_ne # m
-        self.csv_path = self.csv_path = (
+        self.t_estimated_apogee = t_estimated_apogee
+        self.csv_path : Path = (
             Path(__file__).resolve().parents[1] / "data" / "openrocket_data.csv"
         )
         self.f_preburnout : Matrix = None
@@ -40,29 +29,131 @@ class Dynamics:
         self.params : list = None
         self.f_params : Matrix = None
         self.f_subs : Matrix = None
-        self.dt = dt
-        self.x0 = np.array(x0, dtype=float) if x0 is not None else None
-        self.t0 = 0.0
+        self.dt : float = dt
+        self.x0 : np.ndarray = np.array(x0, dtype=float) if x0 is not None else None
+        self.t0 : float = 0.0
         self.t_sym : Symbol = None
 
         # Logging
-        self.states = [self.x0]
-        self.ts = [self.t0]
+        self.states : list = [self.x0]
+        self.ts : list = [self.t0]
 
+        ## Uninitialized parameters ##
+        
+        # Rocket parameters
+        self.I_0 : float = None # Initial moment of inertia in kg·m²
+        self.I_f : float = None # Final moment of inertia in kg·m²
+        self.I_3 : float = None # Rotational moment of inertia about z-axis in kg·m²
+        self.x_CG_0 : float = None # Initial center of gravity location in meters
+        self.x_CG_f : float = None # Final center of gravity location in meters
+        self.m_0 : float = None # Initial rocket mass in kg
+        self.m_f : float = None # Final rocket mass in kg
+        self.m_p : float = None # Propellant mass in kg
+        self.d : float = None # Rocket body diameter in meters
+        self.L_ne : float = None # Length from nose to nozzle in meters
+        self.Cnalpha_rocket : float = None # Rocket normal force coefficient derivative
+        self.t_motor_burnout : float = None # Time to motor burnout in seconds
+        self.t_launch_rail_clearance : float = None # Time to launch rail clearance in seconds
 
-    def setRocketParams(self, t_motor_burnout: float, t_estimated_apogee: float, t_launch_rail_clearance: float, prop_mass: float):
+        # Environmental parameters
+        self.rho : float = 1.225 # Air density kg/m^3
+        self.g : float = 9.81 # Gravitational acceleration m/s^2
+
+        # Fin parameters
+        self.N : float = None # Number of fins
+        self.Cr : float = None # Root chord in meters
+        self.Ct : float = None # Tip chord in meters
+        self.s : float = None # Span in meters
+        self.Cnalpha_fin : float = None # Normal force coefficient normalized by angle of attack for 1 fin
+        self.delta : float = None # Fin cant angle in degrees
+
+    def setRocketParams(self, I_0: float, I_f: float, I_3: float,
+                        x_CG_0: float, x_CG_f: float,
+                        m_0: float, m_f: float, m_p: float,
+                        d: float, L_ne: float, Cnalpha_rocket: float,
+                        t_motor_burnout: float, t_launch_rail_clearance: float, t_estimated_apogee: float = 13.571):
         """Set the rocket parameters.
 
         Args:
+            I_0 (float): Initial moment of inertia in kg·m².
+            I_f (float): Final moment of inertia in kg·m².
+            I_3 (float): Moment of inertia about the z-axis in kg·m².
+            x_CG_0 (float): Initial center of gravity location in meters.
+            x_CG_f (float): Final center of gravity location in meters.
+            m_0 (float): Initial mass in kg.
+            m_f (float): Final mass in kg.
+            m_p (float): Propellant mass in kg.
+            d (float): Rocket diameter in meters.
+            L_ne (float): Length from nose to engine exit in meters.
+            Cnalpha_rocket (float): Rocket normal force coefficient derivative.
             t_motor_burnout (float): Time until motor burnout in seconds.
-            t_estimated_apogee (float): Estimated time until apogee in seconds.
+            t_estimated_apogee (float, optional): Estimated time until apogee in seconds. Defaults to 13.571.
             t_launch_rail_clearance (float): Time until launch rail clearance in seconds.
-            prop_mass (float): Propellant mass in kg.
         """
+        self.I_0 = I_0
+        self.I_f = I_f
+        self.I_3 = I_3
+        self.x_CG_0 = x_CG_0
+        self.x_CG_f = x_CG_f
+        self.m_0 = m_0
+        self.m_f = m_f
+        self.m_p = m_p
+        self.d = d
+        self.L_ne = L_ne
+        self.Cnalpha_rocket = Cnalpha_rocket
         self.t_motor_burnout = t_motor_burnout
         self.t_estimated_apogee = t_estimated_apogee
         self.t_launch_rail_clearance = t_launch_rail_clearance
-        self.prop_mass = prop_mass
+    
+    def setEnvParams(self, rho: float, g: float):
+        """Set the environmental parameters.
+
+        Args:
+            rho (float): Air density in kg/m^3.
+            g (float): Gravitational acceleration in m/s^2.
+        """
+        self.rho = rho
+        self.g = g
+
+    def setFinParams(self, N: int, d: float, Cr: float, Ct: float, s: float, Cnalpha_fin: float, delta: float):
+        """Set the fin parameters.
+
+        Args:
+            N (int): Number of fins.
+            d (float): Rocket diameter in meters.
+            Cr (float): Fin root chord in meters.
+            Ct (float): Fin tip chord in meters.
+            s (float): Fin span in meters.
+            Cnalpha_fin (float): Fin normal force coefficient derivative.
+            delta (float): Fin cant angle in degrees.
+        """
+        self.N = N
+        self.d = d
+        self.Cr = Cr
+        self.Ct = Ct
+        self.s = s
+        self.Cnalpha_fin = Cnalpha_fin
+        self.delta = delta
+        
+        
+    def checkParamsSet(self):
+        """Check if all necessary parameters have been set.
+
+        Raises:
+            ValueError: If any parameter is not set.
+        """
+        required_params = [
+            'I_0', 'I_f', 'I_3',
+            'x_CG_0', 'x_CG_f',
+            'm_0', 'm_f', 'm_p',
+            'd', 'L_ne',
+            't_motor_burnout', 't_estimated_apogee', 't_launch_rail_clearance',
+            'rho', 'g',
+            'N', 'Cr', 'Ct', 's', 'Cnalpha_fin'
+        ]
+        for param in required_params:
+            if not hasattr(self, param):
+                raise ValueError(f"Parameter '{param}' is not set. Please set all necessary parameters before proceeding.")
 
     # TODO: Potential to implement our own line of best fit function instead of using numpy's polyfit
     def getLineOfBestFitTime(self, var: str, n: int = 1):
@@ -101,8 +192,8 @@ class Dynamics:
         return coeffs, n
 
     # TODO: Potential to implement our own interpolation function instead of using numpy's interp
-    def getTimeConstants(self, t: float):
-        """Get the constants for the rocket at time t.
+    def getThrust(self, t: float):
+        """Get the thrust for the rocket at time t.
 
         Args:
             t (float): The time in seconds.
@@ -113,136 +204,36 @@ class Dynamics:
 
         constants = dict()
         ## Post burnout constants ##
-        I = Matrix([0.287, 0.287, 0.0035]) # Post burnout inertia values from OpenRocket, kg*m^2
-        m = 2.589  # Post burnout mass from OpenRocket, kg
-        CG = 63.5/100  # Post burnout CG from OpenRocket, m
+        # I = Matrix([0.287, 0.287, 0.0035]) # Post burnout inertia values from OpenRocket, kg*m^2
+        # m = 2.589  # Post burnout mass from OpenRocket, kg
+        # CG = 63.5/100  # Post burnout CG from OpenRocket, m
         T = Matrix([0., 0., 0.])  # N
 
         motor_burnout = t > self.t_motor_burnout
 
         # TODO: for added efficiency, only call getLineOfBestFitTime once per variable and store the results
         if not motor_burnout:
-            coeffs_mass, degree_mass = self.getLineOfBestFitTime("mass")
-            m = sum(coeffs_mass[i] * t**(degree_mass - i) for i in range(degree_mass + 1))
+            # coeffs_mass, degree_mass = self.getLineOfBestFitTime("mass")
+            # m = sum(coeffs_mass[i] * t**(degree_mass - i) for i in range(degree_mass + 1))
 
-            coeffs_inertia, degree_inertia = self.getLineOfBestFitTime("inertia")
-            I_long = sum(coeffs_inertia[i] * t**(degree_inertia - i) for i in range(degree_inertia + 1))
-            I[0] = I_long # Ixx
-            I[1] = I_long # Iyy
+            # coeffs_inertia, degree_inertia = self.getLineOfBestFitTime("inertia")
+            # I_long = sum(coeffs_inertia[i] * t**(degree_inertia - i) for i in range(degree_inertia + 1))
+            # I[0] = I_long # Ixx
+            # I[1] = I_long # Iyy
 
-            coeffs_CG, degree_CG = self.getLineOfBestFitTime("CG")
-            CG = sum(coeffs_CG[i] * t**(degree_CG - i) for i in range(degree_CG + 1))
+            # coeffs_CG, degree_CG = self.getLineOfBestFitTime("CG")
+            # CG = sum(coeffs_CG[i] * t**(degree_CG - i) for i in range(degree_CG + 1))
 
             times = pd.read_csv(self.csv_path)["# Time (s)"]
             thrust = pd.read_csv(self.csv_path)["Thrust (N)"]
             T[2] = np.interp(t, times, thrust) # Thrust acting in z direction
 
-        constants["inertia"] = I
-        constants["mass"] = m
-        constants["CG"] = CG
+        # constants["inertia"] = I
+        # constants["mass"] = m
+        # constants["CG"] = CG
         constants["thrust"] = T
         
         return constants
-
-    
-    def quat_to_euler_xyz(self, q: np.ndarray, degrees=False, eps=1e-9):
-        """
-        Convert quaternion [w, x, y, z] to Euler angles (theta, phi, psi)
-        using the intrinsic XYZ convention:
-            theta: rotation about x (pitch)
-            phi:   rotation about y (yaw)
-            psi:   rotation about z (roll)
-        Such that: R = Rz(psi) @ Ry(phi) @ Rx(theta)
-
-        Args:
-            q (array-like): Quaternion [w, x, y, z].
-            degrees (bool): If True, return angles in degrees. (default: radians)
-            eps (float):    Small epsilon to handle numerical edge cases.
-
-        Returns:
-            (theta, phi, psi): tuple of floats
-        """
-        # normalize to be safe
-        n = np.linalg.norm(q)
-        if n < eps:
-            raise ValueError("Zero-norm quaternion")
-        w = q[0] / n
-        x = q[1] / n
-        y = q[2] / n
-        z = q[3] / n
-
-        # Rotation matrix from quaternion (world<-body)
-        # R[i,j] = row i, column j
-        xx, yy, zz = x*x, y*y, z*z
-        wx, wy, wz = w*x, w*y, w*z
-        xy, xz, yz = x*y, x*z, y*z
-
-        R = np.array([
-            [1 - 2*(yy + zz),   2*(xy - wz),       2*(xz + wy)],
-            [2*(xy + wz),       1 - 2*(xx + zz),   2*(yz - wx)],
-            [2*(xz - wy),       2*(yz + wx),       1 - 2*(xx + yy)]
-        ])
-
-        # Extract for intrinsic XYZ (q = qz(psi) ⊗ qy(phi) ⊗ qx(theta))
-        # From R = Rz(psi) Ry(phi) Rx(theta):
-        #   phi   = asin(-R[2,0])
-        #   theta = atan2(R[2,1], R[2,2])
-        #   psi   = atan2(R[1,0], R[0,0])
-        #
-        # Handle numerical drift by clamping asin argument.
-        s = -R[2, 0]
-        s = np.clip(s, -1.0, 1.0)
-        phi   = np.arcsin(s)
-        theta = np.arctan2(R[2, 1], R[2, 2])
-
-        # If cos(phi) ~ 0 (gimbal lock), fall back to a stable computation for psi
-        if abs(np.cos(phi)) < eps:
-            # At gimbal lock, theta and psi are coupled; choose a consistent psi:
-            # Use elements that remain well-defined:
-            # when cos(phi) ~ 0, use psi from atan2(-R[0,1], R[1,1])
-            psi = np.arctan2(-R[0, 1], R[1, 1])
-        else:
-            psi = np.arctan2(R[1, 0], R[0, 0])
-
-        if degrees:
-            return np.degrees(theta), np.degrees(phi), np.degrees(psi)
-        return theta, phi, psi
-
-
-    def euler_to_quat_xyz(self, theta, phi, psi, degrees=False):
-        """
-        Convert Euler angles to a quaternion using intrinsic XYZ:
-            - theta: rotation about x (pitch)
-            - phi:   rotation about y (yaw)
-            - psi:   rotation about z (roll)
-        Convention: R = Rz(psi) @ Ry(phi) @ Rx(theta)
-        Quaternion is returned as [w, x, y, z].
-
-        Args:
-            theta, phi, psi : floats (radians by default; set degrees=True if in deg)
-            degrees         : if True, inputs are in degrees
-
-        Returns:
-            np.ndarray shape (4,) -> [w, x, y, z]
-        """
-        if degrees:
-            theta, phi, psi = np.radians([theta, phi, psi])
-
-        # half-angles
-        cth, sth = np.cos(theta/2.0), np.sin(theta/2.0)
-        cph, sph = np.cos(phi/2.0),   np.sin(phi/2.0)
-        cps, sps = np.cos(psi/2.0),   np.sin(psi/2.0)
-
-        # intrinsic XYZ closed form (q = qz * qy * qx), scalar-first
-        qw =  cph*cps*cth + sph*sps*sth
-        qx = -sph*sps*cth + sth*cph*cps
-        qy =  sph*cps*cth + sps*sth*cph
-        qz = -sph*sth*cps + sps*cph*cth
-
-        q = np.array([qw, qx, qy, qz], dtype=float)
-        # normalize to guard against numerical drift
-        q /= np.linalg.norm(q)
-        return q
     
 
     def R_BW_from_q(self, qw, qx, qy, qz):
@@ -271,7 +262,7 @@ class Dynamics:
 
 
     def deriveEOM(self, post_burnout: bool):
-        """Get the equations of motion for the rocket, derive the A and B matrices at time t.
+        """Get the equations of motion for the rocket. Sets self.f_preburnout or self.f_postburnout.
 
         ## Assumptions:
         - Rocket body axis is aligned with z-axis
@@ -296,13 +287,12 @@ class Dynamics:
         - Piecewise functions are used to bound certain variables (e.g., AoA, Cnalpha, C) to ensure numerical stability and physical realism
 
         ## Usage:
-        - To derive the full set of equations of motion, call deriveEOM() twice: once with post_burnout=False and once with post_burnout=True
+        - To derive the full set of equations of motion, call setup_eom() which derives both pre- and post-burnout EOMs.
 
         Args:
             post_burnout (bool): Whether the rocket is in the post-burnout phase.
-        Returns:
-            tuple: A tuple containing the A and B Numpy arrays evaluated at the operating state xhat and input u.
         """
+
         w1, w2, w3, v1, v2 = symbols('w_1 w_2 w_3 v_1 v_2', real = True) # Angular and linear velocities
         v3 = symbols('v_3', real = True, positive = True) # Longitudinal velocity, assumed positive during flight
         qw, qx, qy, qz = symbols('q_w q_x q_y q_z', real = True) # Quaternion components
@@ -310,7 +300,7 @@ class Dynamics:
         T1, T2, T3 = symbols('T_1 T_2 T_3', real = True) # Thrusts
         mass, rho, d, g, CG = symbols('m rho d g CG', real = True) # Mass, air density, diameter, gravity, center of gravity
         delta = symbols('delta', real = True) # Fin cant angle
-        Cnalpha_fin = symbols('Cnalpha_fin', real = True, positive = True) # Fin normal force coefficient derivative
+        Cnalpha_fin, Cnalpha_rocket = symbols('Cnalpha_fin Cnalpha_rocket', real = True, positive = True) # Fin and rocket normal force coefficient derivatives
         Cr, Ct, s = symbols('Cr Ct s', real = True, positive = True) # Fin root chord, tip chord, span
         N = symbols('N', real = True, positive = True) # Number of fins
         t_sym = symbols('t', real = True) # Time symbol for Heaviside function
@@ -360,12 +350,7 @@ class Dynamics:
         ## Total Forces ##
         F = T + Fd + Fl + Fg # Thrust + Drag + Lift + Gravity
 
-        ## Cnalpha ##
-        # TODO: Show how this is calculated from OpenRocket data
-        Cnalpha = 0.207  # Linear assumption of Cn vs AoA slope from OpenRocket data (fitted to quadratic, minimal x^2 coefficient)
-
         ## Stability Margin ##
-        # TODO: Potential to implement our own polynomial fitting function instead of using hardcoded coefficients from Google Sheets
         AoA_deg = AoA_eff * 180 / pi # Convert AoA to degrees for polynomial fit
         SM = 0
         if not post_burnout:
@@ -376,26 +361,20 @@ class Dynamics:
         ## Corrective moment coefficient ##
         # Multiplying by stability because CG is where rotation is about and CP is where force is applied
             # SM = (CP - CG) / d
-        # TODO: Show how this is calculated (Apogee Rocketry report reference)
-        C_raw = H * v_mag**2 * A * Cnalpha * AoA_eff * (SM * d) * rho / 2 # See if it's Cnalpha or Cn, Cn = Cnalpha * AoA_eff
+        C_raw = H * v_mag**2 * A * Cnalpha_rocket * AoA_eff * (SM * d) * rho / 2
         Ccm = Matrix([C_raw * sin(beta), -C_raw * cos(beta), 0])  # Corrective moment vector
 
         ## Propulsive Damping Moment Coefficient (Cdp) ##
-        # TODO: Show how this is calculated (Apogee Rocketry report reference)
-        mdot = self.prop_mass / self.t_motor_burnout # kg/s, average mass flow rate during motor burn
+        mdot = self.m_p / self.t_motor_burnout # kg/s, average mass flow rate during motor burn
         Cdp = mdot * (self.L_ne - CG)**2 # kg*m^2/s
 
         ## Aerodynamic Damping Moment Coefficient (Cda) ##
-        # TODO: Show how this is calculated (Apogee Rocketry report reference)
-        Cda = H * (rho * v_mag * A / 2) * (Cnalpha * AoA_eff * (SM * d)**2)
+        Cda = H * (rho * v_mag * A / 2) * (Cnalpha_rocket * AoA_eff * (SM * d)**2)
 
         ## Damping Moment Coefficient (Cdm) ##
         Cdm = Cdp + Cda
 
-        ## Moment due to aileron deflection ##
-        # Fin misalignment moment, remove for 0 roll (ideal rocket flight)
-        # M_fin = 5.5 * (Float(1)/2 * rho * v_mag**2) * Matrix([0, 0, 1e-6])
-
+        ## Forcing moment due to fin cant angle ##
         gamma = Ct/Cr
         r_t = d/2
         tau = (s + r_t) / r_t
@@ -456,7 +435,7 @@ class Dynamics:
 
         vars = [w1, w2, w3, v1, v2, v3, qw, qx, qy, qz]
         self.vars = vars
-        params = [I1, I2, I3, T1, T2, T3, mass, rho, d, g, CG, delta, Cnalpha_fin, Cr, Ct, s, N]
+        params = [I1, I2, I3, T1, T2, T3, mass, rho, d, g, CG, delta, Cnalpha_fin, Cnalpha_rocket, Cr, Ct, s, N]
         self.params = params
 
         if (not post_burnout):
@@ -487,19 +466,25 @@ class Dynamics:
         Returns:
             None
         """
+        self.checkParamsSet()
         if self.f_preburnout is None or self.f_postburnout is None or self.vars is None:
             print("Equations of motion have not been derived yet. Call deriveEOM() first on pre- and post-burnout.")
             return None, None, None, None
 
         w1, w2, w3, v1, v2, v3, qw, qx, qy, qz = self.vars
-        I1, I2, I3, T1, T2, T3, mass, rho, d, g, CG, delta, Cnalpha_fin, Cr, Ct, s, N = self.params
+        I1, I2, I3, T1, T2, T3, mass, rho, d, g, CG, delta, Cnalpha_fin, Cnalpha_rocket, Cr, Ct, s, N = self.params
 
         ## Get time varying constants ##
-        constants = self.getTimeConstants(t)
-        mass_rocket = constants["mass"]
-        inertia = constants["inertia"]
-        CoG = constants["CG"]
+        constants = self.getThrust(t)
+        # mass_rocket = constants["mass"]
+        # inertia = constants["inertia"]
+        # CoG = constants["CG"]
         thrust = constants["thrust"]
+
+        mass_rocket = self.m_0 - self.m_p / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.m_f
+        I_long = self.I_0 - (self.I_0 - self.I_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.I_f
+        inertia = [I_long, I_long, self.I_3]
+        x_CG = self.x_CG_0 - (self.x_CG_0 - self.x_CG_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.x_CG_f
 
         params = {
             I1: Float(inertia[0]), # Ixx
@@ -509,16 +494,17 @@ class Dynamics:
             T2: thrust[1],
             T3: thrust[2],
             mass: Float(mass_rocket),
-            CG: Float(CoG), # m center of gravity
-            rho: Float(1.225), # kg/m^3 temp constant rho
-            g: Float(-9.81), # m/s^2
-            N: Float(4), # number of fins
-            d: Float(7.87/100) , # m rocket diameter
-            Cr: Float(18.0/100), # m fin root chord
-            Ct: Float(5.97/100), # m fin tip chord
-            s: Float(8.76/100), # m fin span
-            Cnalpha_fin: Float(2.72025), # fin normal force coefficient derivative
-            delta: rad(1), # rad fin cant angle, assume 0 for ideal rocket flight
+            CG: Float(x_CG), # m center of gravity
+            rho: self.rho, # kg/m^3
+            g: self.g, # m/s^2
+            N: self.N, # number of fins
+            d: self.d, # m rocket diameter
+            Cr: self.Cr, # m fin root chord
+            Ct: self.Ct, # m fin tip chord
+            s: self.s, # m fin span
+            Cnalpha_fin: self.Cnalpha_fin, # fin normal force coefficient derivative
+            Cnalpha_rocket: self.Cnalpha_rocket, # rocket normal force coefficient derivative
+            delta: rad(self.delta), # rad fin cant angle
             self.t_sym: Float(t)
         }
 
@@ -540,7 +526,7 @@ class Dynamics:
         }
         f_params = f_params.xreplace(repl)
 
-        ## NOTE: Not finding equilibrium states, using trajectory/operating-point linearization
+        ## Substitute state variables ##
         m_e = {
             w1: xhat[0],
             w2: xhat[1],
@@ -558,42 +544,6 @@ class Dynamics:
 
         self.f_params = f_params
         self.f_subs = f_subs
-
-
-    def get_thrust_accel(self, t: float):
-        """Get the thrust acceleration at time t.
-
-        Args:
-            t (float): The time in seconds.
-
-        Returns:
-            np.array: The thrust acceleration vector as a numpy array.
-        """
-        thrust = self.getTimeConstants(t)["thrust"]
-        m = self.getTimeConstants(t)["mass"]
-        a_thrust = np.zeros(10)
-        a_thrust[3] = thrust[0] / m
-        a_thrust[4] = thrust[1] / m
-        a_thrust[5] = thrust[2] / m
-        return a_thrust
-
-
-    def get_gravity_accel(self, xhat: np.array):
-        """Get the gravity acceleration in body frame at time t.
-
-        Args:
-            xhat (np.array): The current state estimate as a numpy array.
-
-        Returns:
-            np.array: The gravity acceleration vector as a numpy array.
-        """
-        g = np.array([0.0, 0.0, -9.81])
-        qw, qx, qy, qz = xhat[6], xhat[7], xhat[8], xhat[9]
-        R_world_to_body = np.array(self.R_BW_from_q(qw, qx, qy, qz)).astype(np.float64)
-        g_body = R_world_to_body @ g
-        a_gravity = np.zeros(10)
-        a_gravity[3:6] = g_body
-        return a_gravity
     
 
     def _f(self, t, x):
@@ -635,7 +585,7 @@ class Dynamics:
             print(f"t: {t:.3f}")
 
 
-    def test_eom(self, xhat: np.array):
+    def forward_euler(self, xhat: np.array):
         """Test the equations of motion by computing f_subs at the given state and input.
 
         Args:
