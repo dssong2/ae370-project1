@@ -1,4 +1,3 @@
-# TODO: reorganize all the code so that all parameters are defined together either in __init__ or in a separate function
 from sympy import *
 import numpy as np
 import pandas as pd
@@ -153,43 +152,7 @@ class Dynamics:
             if not hasattr(self, param):
                 raise ValueError(f"Parameter '{param}' is not set. Please set all necessary parameters before proceeding.")
 
-    # TODO: Potential to implement our own line of best fit function instead of using numpy's polyfit
-    def getLineOfBestFitTime(self, var: str, n: int = 1):
-        """Get the line of best fit for the given data with a polynomial of degree n.
 
-        Args:
-            var (str): The variable to fit the line to.
-            n (int, optional): The degree of the polynomial to fit. Defaults to 1.
-
-        Returns:
-            tuple: A tuple containing the coefficients of the polynomial and its degree.
-        """
-        # Load the CSV data into a DataFrame
-        data = pd.read_csv(self.csv_path)
-        t = data["# Time (s)"]
-        y = None
-        if (var == "mass"):
-            y = data["Mass (g)"] / 1000  # Convert to kg
-        elif (var == "inertia"):
-            y = data["Longitudinal moment of inertia (kg·m²)"]
-        elif (var == "CG"):
-            y = data["CG location (cm)"] / 100  # Convert to m
-        else:
-            raise ValueError(
-                "Invalid variable. Choose from: " \
-                "'mass'," \
-                "'inertia'," \
-                "'CG'. " \
-                )
-
-        # Filter data based on motor burnout
-        mask = t <= self.t_motor_burnout
-        t = t[mask]
-        y = y[mask]
-        coeffs = np.polyfit(t, y, n)
-        return coeffs, n
-
-    # TODO: Potential to implement our own interpolation function instead of using numpy's interp
     def getThrust(self, t: float):
         """Get the thrust for the rocket at time t.
 
