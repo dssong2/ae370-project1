@@ -16,6 +16,10 @@ git clone https://github.com/dssong2/ae370-project1.git && cd ae370-project1
 ```
 pip install -r requirements.txt
 ```
-To reproduce rocket state result graphs, run the state_result.ipynb file from the start. This will take a while (~10-15 min)
+Navigate to main folder to find code contents. 
+
+dynamics.py contains the class Dynamics that defines the equations of motion and declares the RK4 numerical method function.
+
+To reproduce rocket state result graphs, run the state_results.ipynb file from the start. This will take a while (~10-15 min)
 
 To reproduce error analysis graphs, run the analysis.ipynb file from the start.
