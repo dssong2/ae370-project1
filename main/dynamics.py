@@ -374,10 +374,11 @@ class Dynamics:
         ## Damping Moment Coefficient (Cdm) ##
         Cdm = Cdp + Cda
 
-        ## Forcing moment due to fin cant angle ##
+        ## Moment due to fin cant angle ##
         gamma = Ct/Cr
         r_t = d/2
         tau = (s + r_t) / r_t
+        # Roll forcing moment
         Y_MA = (s/3) * (1 + 2*gamma)/(1+gamma) # Spanwise location of fin aerodynamic center
         K_f = (1/pi**2) * \
             ((pi**2/4)*((tau+1)**2/tau**2) \
@@ -388,6 +389,7 @@ class Dynamics:
             + (8/(tau-1)**2)*log((tau**2+1)/(2*tau)))
         M_f = K_f * (1/2 * rho * v_mag**2) * (N * (Y_MA + r_t) * Cnalpha_fin * delta * A) # Forcing roll moment due to fin cant angle delta
 
+        # Roll damping moment
         trap_integral = s/12 * ((Cr + 3*Ct)*s**2 + 4*(Cr+2*Ct)*s*r_t + 6*(Cr + Ct)*r_t**2)
         C_ldw = 2 * N * Cnalpha_fin / (A * d**2) * cos(delta) * trap_integral
         K_d = 1 + ((tau-gamma)/tau - (1-gamma)/(tau-1)*ln(tau))/((tau+1)*(tau-gamma)/2 - (1-gamma)*(tau**3-1)/(3*(tau-1))) # Correction factor for conical fins
