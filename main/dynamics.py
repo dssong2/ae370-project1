@@ -200,38 +200,16 @@ class Dynamics:
             dict: A dictionary containing inertia, mass, CG, and thrust at time t.
         """
 
-        constants = dict()
-        ## Post burnout constants ##
-        I = Matrix([0.287, 0.287, 0.0035]) # Post burnout inertia values from OpenRocket, kg*m^2
-        m = 2.589  # Post burnout mass from OpenRocket, kg
-        CG = 63.5/100  # Post burnout CG from OpenRocket, m
         T = Matrix([0., 0., 0.])  # N
 
         motor_burnout = t > self.t_motor_burnout
 
-        # TODO: for added efficiency, only call getLineOfBestFitTime once per variable and store the results
         if not motor_burnout:   
-            coeffs_mass, degree_mass = self.getLineOfBestFitTime("mass")
-            m = sum(coeffs_mass[i] * t**(degree_mass - i) for i in range(degree_mass + 1))
-
-            coeffs_inertia, degree_inertia = self.getLineOfBestFitTime("inertia")
-            I_long = sum(coeffs_inertia[i] * t**(degree_inertia - i) for i in range(degree_inertia + 1))
-            I[0] = I_long # Ixx
-            I[1] = I_long # Iyy
-
-            coeffs_CG, degree_CG = self.getLineOfBestFitTime("CG")
-            CG = sum(coeffs_CG[i] * t**(degree_CG - i) for i in range(degree_CG + 1))
-
             times = pd.read_csv(self.csv_path)["# Time (s)"]
             thrust = pd.read_csv(self.csv_path)["Thrust (N)"]
             T[2] = np.interp(t, times, thrust) # Thrust acting in z direction
-
-        constants["inertia"] = I
-        constants["mass"] = m
-        constants["CG"] = CG
-        constants["thrust"] = T
         
-        return constants
+        return T
     
 
     def quat_to_euler_xyz(self, q: np.ndarray, degrees=False, eps=1e-9):
@@ -539,16 +517,11 @@ class Dynamics:
         I1, I2, I3, T1, T2, T3, mass, rho, d, g, CG, delta, Cnalpha_fin, Cnalpha_rocket, Cr, Ct, s, N = self.params
 
         ## Get time varying constants ##
-        constants = self.getThrust(t)
-        mass_rocket = constants["mass"]
-        inertia = constants["inertia"]
-        x_CG = constants["CG"]
-        thrust = constants["thrust"]
-
-        # mass_rocket = self.m_0 - self.m_p / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.m_f
-        # I_long = self.I_0 - (self.I_0 - self.I_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.I_f
-        # inertia = [I_long, I_long, self.I_3]
-        # x_CG = self.x_CG_0 - (self.x_CG_0 - self.x_CG_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.x_CG_f
+        thrust = self.getThrust(t)
+        mass_rocket = self.m_0 - self.m_p / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.m_f
+        I_long = self.I_0 - (self.I_0 - self.I_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.I_f
+        inertia = [I_long, I_long, self.I_3]
+        x_CG = self.x_CG_0 - (self.x_CG_0 - self.x_CG_f) / self.t_motor_burnout * t if t <= self.t_motor_burnout else self.x_CG_f
 
         params = {
             I1: Float(inertia[0]), # Ixx
